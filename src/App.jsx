@@ -2,12 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Users, CreditCard, Award, FileSpreadsheet,
-  Search, Printer, Trash2, AlertCircle, Sparkles,
-  GraduationCap, Lock, Settings, UserPlus, X, MessageCircle, Eye, Download, Image
+  Search, Printer, AlertCircle, Sparkles,
+  GraduationCap, Lock, Settings, UserPlus, X, MessageCircle, Eye, Download, Image, History
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
 import {
   DEFAULT_SCHOOL, DEFAULT_CLASSES, DEFAULT_FEE_STRUCTURE,
   DEFAULT_SUBJECTS, INITIAL_STUDENTS
@@ -18,6 +16,13 @@ import AdmissionDesk from './components/AdmissionDesk';
 import ExamManager from './components/ExamManager';
 import StudentDetailModal from './components/StudentDetailModal';
 import FeeManagerModal from './components/FeeManagerModal';
+import AuditCenterModal from './components/AuditCenterModal';
+import ClassPromotionModal from './components/ClassPromotionModal';
+import {
+  exportElementAsPNG,
+  exportElementAsPDF,
+  shareElementToWhatsApp
+} from './utils/exportHelper';
 
 export default function App() {
   const [schoolInfo, setSchoolInfo] = useState(() => {
@@ -50,8 +55,18 @@ export default function App() {
     return saved ? JSON.parse(saved) : INITIAL_STUDENTS;
   });
 
+  const [trashedStudents, setTrashedStudents] = useState(() => {
+    const saved = localStorage.getItem('altumtrack_trash_v1');
+    return saved ? JSON.parse(saved) : [];
+  });
+
   const [feeLogs, setFeeLogs] = useState(() => {
     const saved = localStorage.getItem('altumtrack_feelogs_v1');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [auditLogs, setAuditLogs] = useState(() => {
+    const saved = localStorage.getItem('altumtrack_audit_v1');
     return saved ? JSON.parse(saved) : [];
   });
 
@@ -60,13 +75,18 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedClass, setSelectedClass] = useState('All');
+  const [feeFilterStatus, setFeeFilterStatus] = useState('all');
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [detailModalStudent, setDetailModalStudent] = useState(null);
   const [feeManagerStudent, setFeeManagerStudent] = useState(null);
-  const [studioMode, setStudioMode] = useState('admit'); // admit | result | idcard | tc | bonafide
+  const [showAuditModal, setShowAuditModal] = useState(false);
+  const [showPromotionModal, setShowPromotionModal] = useState(false);
+  const [studioMode, setStudioMode] = useState('admit');
   const [receiptModalStudent, setReceiptModalStudent] = useState(null);
+  const [exportingStatus, setExportingStatus] = useState('');
 
   const studioRef = useRef(null);
+  const receiptRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem('altumtrack_school_v2', JSON.stringify(schoolInfo));
@@ -93,8 +113,105 @@ export default function App() {
   }, [students]);
 
   useEffect(() => {
+    localStorage.setItem('altumtrack_trash_v1', JSON.stringify(trashedStudents));
+  }, [trashedStudents]);
+
+  useEffect(() => {
     localStorage.setItem('altumtrack_feelogs_v1', JSON.stringify(feeLogs));
   }, [feeLogs]);
+
+  useEffect(() => {
+    localStorage.setItem('altumtrack_audit_v1', JSON.stringify(auditLogs));
+  }, [auditLogs]);
+
+  const recordAudit = (type, description, undoPayload = null) => {
+    const entry = {
+      id: 'AUD-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+      type,
+      description,
+      timestamp: new Date().toISOString(),
+      canUndo: Boolean(undoPayload),
+      undoPayload,
+      undone: false
+    };
+    setAuditLogs(prev => [entry, ...prev.slice(0, 99)]);
+  };
+
+  const handleUndoAction = (auditItem) => {
+    const { type, undoPayload } = auditItem;
+    if (!undoPayload) return;
+
+    if (type === 'FEE_PAID') {
+      const { studentId, amount, feeLogId } = undoPayload;
+      setFeeLogs(prev => prev.filter(l => l.id !== feeLogId));
+      setStudents(prev => prev.map(s =>
+        s.id === studentId ? { ...s, paidFee: Math.max(0, Number(s.paidFee) - amount) } : s
+      ));
+    } else if (type === 'FEE_REVERT') {
+      const { restoredLog, studentId, amount } = undoPayload;
+      setFeeLogs(prev => [restoredLog, ...prev]);
+      setStudents(prev => prev.map(s =>
+        s.id === studentId ? { ...s, paidFee: Math.min(s.totalFee, Number(s.paidFee) + amount) } : s
+      ));
+    } else if (type === 'PROFILE_EDIT') {
+      const { previousStudent } = undoPayload;
+      setStudents(prev => prev.map(s => s.id === previousStudent.id ? previousStudent : s));
+    } else if (type === 'STUDENT_TRASHED') {
+      const { studentObj } = undoPayload;
+      setTrashedStudents(prev => prev.filter(s => s.id !== studentObj.id));
+      setStudents(prev => [studentObj, ...prev]);
+    } else if (type === 'ADMISSION') {
+      const { studentId } = undoPayload;
+      setStudents(prev => prev.filter(s => s.id !== studentId));
+    } else if (type === 'CLASS_PROMOTION') {
+      const { previousStudentsState } = undoPayload;
+      setStudents(previousStudentsState);
+    }
+
+    setAuditLogs(prev => prev.map(a => a.id === auditItem.id ? { ...a, undone: true } : a));
+    setExportingStatus('Action Reverted Successfully!');
+    setTimeout(() => setExportingStatus(''), 2000);
+  };
+
+  const handleSoftDeleteStudent = (id) => {
+    const target = students.find(s => s.id === id);
+    if (!target) return;
+    setStudents(prev => prev.filter(s => s.id !== id));
+    setTrashedStudents(prev => [target, ...prev]);
+    recordAudit(
+      'STUDENT_TRASHED',
+      `Moved ${target.name} (${target.className}-${target.section}) to Recycle Bin`,
+      { studentObj: target }
+    );
+  };
+
+  const handleRestoreStudent = (id) => {
+    const target = trashedStudents.find(s => s.id === id);
+    if (!target) return;
+    setTrashedStudents(prev => prev.filter(s => s.id !== id));
+    setStudents(prev => [target, ...prev]);
+    recordAudit('ADMISSION', `Restored ${target.name} from Recycle Bin`);
+  };
+
+  const handlePermanentDeleteStudent = (id) => {
+    setTrashedStudents(prev => prev.filter(s => s.id !== id));
+  };
+
+  // 1-Tap Class Promotion Handler
+  const handlePromoteClassBatch = (fromClass, toClass) => {
+    const previousStudentsState = JSON.parse(JSON.stringify(students));
+    setStudents(prev => prev.map(s => {
+      if (s.className === fromClass) {
+        return { ...s, className: toClass };
+      }
+      return s;
+    }));
+    recordAudit(
+      'CLASS_PROMOTION',
+      `Promoted all students from Class ${fromClass} to Class ${toClass}`,
+      { previousStudentsState }
+    );
+  };
 
   if (!schoolInfo.isConfigured || forceWizard) {
     return (
@@ -119,26 +236,45 @@ export default function App() {
     );
   }
 
+  // Multi-term metric calculator & Class Ranks
   const getStudentMetrics = (s) => {
     const maxPerSub = Number(examConfig.maxMarks) || 100;
     const passPerSub = Number(examConfig.passMarks) || 33;
-    const vals = subjects.map(sub => Number(s.marks?.[sub] ?? 80));
+    const termKey = schoolInfo.examName.replace(/[^a-zA-Z0-9]/g, '_');
+    const termMarks = s.termMarks?.[termKey] || s.marks || {};
+
+    const vals = subjects.map(sub => Number(termMarks[sub] ?? 80));
     const total = vals.reduce((a, b) => a + b, 0);
     const maxTotal = subjects.length * maxPerSub;
     const percentage = Number(((total / (maxTotal || 1)) * 100).toFixed(1));
     const passedAllSubjects = vals.every(v => v >= passPerSub);
+
     let grade = 'F';
     if (percentage >= 90) grade = 'A+';
     else if (percentage >= 80) grade = 'A';
     else if (percentage >= 70) grade = 'B+';
     else if (percentage >= 60) grade = 'B';
     else if (percentage >= 40) grade = 'C';
+
+    // Compute Class Rank
+    const sameClassStudents = students.filter(st => st.className === s.className);
+    const ranked = sameClassStudents.map(st => {
+      const stTermMarks = st.termMarks?.[termKey] || st.marks || {};
+      const stVals = subjects.map(sub => Number(stTermMarks[sub] ?? 80));
+      const stTot = stVals.reduce((a, b) => a + b, 0);
+      return { id: st.id, total: stTot };
+    }).sort((a, b) => b.total - a.total);
+
+    const rankIdx = ranked.findIndex(r => r.id === s.id);
+    const classRank = rankIdx >= 0 ? rankIdx + 1 : 1;
+
     return {
       total,
       maxTotal,
       percentage,
       grade: passedAllSubjects ? grade : 'F',
-      passed: passedAllSubjects && percentage >= 33
+      passed: passedAllSubjects && percentage >= 33,
+      classRank
     };
   };
 
@@ -167,6 +303,13 @@ export default function App() {
     return matchesSearch && matchesClass;
   });
 
+  const filteredFeeStudents = filteredStudents.filter(s => {
+    const due = Number(s.totalFee || 0) - Number(s.paidFee || 0);
+    if (feeFilterStatus === 'pending') return due > 0;
+    if (feeFilterStatus === 'paid') return due <= 0;
+    return true;
+  });
+
   const totalStudents = students.length;
   const totalExpectedFee = students.reduce((acc, s) => acc + Number(s.totalFee || 0), 0);
   const totalCollectedFee = students.reduce((acc, s) => acc + Number(s.paidFee || 0), 0);
@@ -175,105 +318,156 @@ export default function App() {
     ? (students.reduce((acc, s) => acc + getStudentMetrics(s).percentage, 0) / students.length).toFixed(1)
     : 0;
 
-  // Fee Payment Logging & Audit
   const handleRecordPayment = (studentId, amount, remark) => {
+    const studentObj = students.find(s => s.id === studentId);
+    const feeLogId = 'LOG-' + Date.now();
     const newLog = {
-      id: 'LOG-' + Date.now(),
+      id: feeLogId,
       studentId,
       amount,
       remark,
       date: new Date().toISOString()
     };
     setFeeLogs([newLog, ...feeLogs]);
-    setStudents(students.map(s => {
+    setStudents(prev => prev.map(s => {
       if (s.id === studentId) {
-        return { ...s, paidFee: Math.min(s.totalFee, Number(s.paidFee) + amount) };
+        const updated = { ...s, paidFee: Number(s.paidFee) + amount };
+        if (feeManagerStudent?.id === studentId) setFeeManagerStudent(updated);
+        return updated;
       }
       return s;
     }));
+    recordAudit(
+      'FEE_PAID',
+      `Collected ₹${amount.toLocaleString()} from ${studentObj?.name || studentId} (${remark})`,
+      { studentId, amount, feeLogId }
+    );
     confetti({ particleCount: 50, spread: 50, origin: { y: 0.8 } });
   };
 
-  // Undo / Delete Payment Log
-  const handleDeleteFeeLog = (logId, studentId, amount) => {
-    setFeeLogs(feeLogs.filter(l => l.id !== logId));
-    setStudents(students.map(s => {
+  const handleUpdateFeeAdjustments = (studentId, adj) => {
+    const prevStudent = students.find(s => s.id === studentId);
+    setStudents(prev => prev.map(s => {
       if (s.id === studentId) {
-        return { ...s, paidFee: Math.max(0, Number(s.paidFee) - amount) };
+        const updated = { ...s, ...adj };
+        if (feeManagerStudent?.id === studentId) setFeeManagerStudent(updated);
+        return updated;
       }
       return s;
     }));
+    if (prevStudent) {
+      recordAudit(
+        'PROFILE_EDIT',
+        `Updated fee structure for ${prevStudent.name} (Net: ₹${adj.totalFee.toLocaleString()})`,
+        { previousStudent: prevStudent }
+      );
+    }
   };
 
-  const handleMarkChange = (studentId, subject, value) => {
+  const handleDeleteFeeLog = (logId, studentId, amount) => {
+    const studentObj = students.find(s => s.id === studentId);
+    const targetLog = feeLogs.find(l => l.id === logId);
+    setFeeLogs(feeLogs.filter(l => l.id !== logId));
+    setStudents(prev => prev.map(s => {
+      if (s.id === studentId) {
+        const updated = { ...s, paidFee: Math.max(0, Number(s.paidFee) - amount) };
+        if (feeManagerStudent?.id === studentId) setFeeManagerStudent(updated);
+        return updated;
+      }
+      return s;
+    }));
+    if (targetLog) {
+      recordAudit(
+        'FEE_REVERT',
+        `Reverted ₹${amount.toLocaleString()} fee entry for ${studentObj?.name || studentId}`,
+        { restoredLog: targetLog, studentId, amount }
+      );
+    }
+  };
+
+  // Multi-Term Mark Change Handler
+  const handleMarkChange = (studentId, subject, value, termKey) => {
     const maxM = Number(examConfig.maxMarks) || 100;
     const clamped = Math.max(0, Math.min(maxM, Number(value) || 0));
-    setStudents(students.map(s => {
+    setStudents(prev => prev.map(s => {
       if (s.id === studentId) {
-        return { ...s, marks: { ...s.marks, [subject]: clamped } };
+        const existingTerms = s.termMarks || {};
+        const currentTermMarks = existingTerms[termKey] || { ...(s.marks || {}) };
+        currentTermMarks[subject] = clamped;
+        return {
+          ...s,
+          marks: termKey === schoolInfo.examName.replace(/[^a-zA-Z0-9]/g, '_') ? currentTermMarks : s.marks,
+          termMarks: {
+            ...existingTerms,
+            [termKey]: currentTermMarks
+          }
+        };
       }
       return s;
     }));
-  };
-
-  // Export as PNG Image
-  const handleExportPNG = async () => {
-    if (!studioRef.current) return;
-    const canvas = await html2canvas(studioRef.current, { scale: 2, useCORS: true });
-    const image = canvas.toDataURL('image/png');
-    const a = document.createElement('a');
-    a.href = image;
-    a.download = `${currentStudioStudent.name}-${studioMode}-altumtrack.png`;
-    a.click();
-  };
-
-  // Export as PDF
-  const handleExportPDF = async () => {
-    if (!studioRef.current) return;
-    const canvas = await html2canvas(studioRef.current, { scale: 2, useCORS: true });
-    const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const imgWidth = 210;
-    const pageHeight = 295;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
-    let heightLeft = imgHeight;
-    let position = 0;
-
-    pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-    heightLeft -= pageHeight;
-    while (heightLeft >= 0) {
-      position = heightLeft - imgHeight;
-      pdf.addPage();
-      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-    }
-    pdf.save(`${currentStudioStudent.name}-${studioMode}-altumtrack.pdf`);
-  };
-
-  // WhatsApp Share Image
-  const handleWhatsAppShare = async () => {
-    if (!studioRef.current) return;
-    const canvas = await html2canvas(studioRef.current, { scale: 2, useCORS: true });
-    canvas.toBlob(blob => {
-      const file = new File([blob], `${studioMode}.png`, { type: 'image/png' });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        navigator.share({
-          files: [file],
-          title: 'Altumtrack Document',
-          text: `Official ${studioMode.toUpperCase()} for ${currentStudioStudent.name} from ${schoolInfo.name}`
-        }).catch(() => {});
-      } else {
-        const cleanPhone = (currentStudioStudent.phone || '').replace(/\D/g, '');
-        const msg = `Official ${studioMode.toUpperCase()} for *${currentStudioStudent.name}* (Class ${currentStudioStudent.className}) from *${schoolInfo.name}*`;
-        window.open(`https://wa.me/91${cleanPhone}?text=${encodeURIComponent(msg)}`, '_blank');
-      }
-    }, 'image/png');
   };
 
   const currentStudioStudent = selectedStudent || students[0];
 
+  const runStudioExport = async (type) => {
+    if (!studioRef.current || !currentStudioStudent) return;
+    try {
+      setExportingStatus(`Generating ${type.toUpperCase()}...`);
+      const fileBase = `${currentStudioStudent.name}_${studioMode}`;
+      const caption = `Official *${studioMode.toUpperCase()}* for *${currentStudioStudent.name}* (Class ${currentStudioStudent.className}-${currentStudioStudent.section}, Roll #${currentStudioStudent.rollNo}) from *${schoolInfo.name}* (${schoolInfo.session}).`;
+
+      if (type === 'png') {
+        await exportElementAsPNG(studioRef.current, fileBase, `${currentStudioStudent.name} - ${studioMode.toUpperCase()}`);
+      } else if (type === 'pdf') {
+        await exportElementAsPDF(studioRef.current, fileBase, `${currentStudioStudent.name} - ${studioMode.toUpperCase()}`);
+      } else if (type === 'whatsapp') {
+        await shareElementToWhatsApp(studioRef.current, fileBase, caption, currentStudioStudent.phone);
+      }
+    } catch (err) {
+      alert('Export error: ' + (err?.message || 'Could not generate file'));
+    } finally {
+      setExportingStatus('');
+    }
+  };
+
+  const runReceiptExport = async (type) => {
+    if (!receiptRef.current || !receiptModalStudent) return;
+    try {
+      setExportingStatus(`Generating Receipt ${type.toUpperCase()}...`);
+      const fileBase = `FeeReceipt_${receiptModalStudent.name}_${receiptModalStudent.rollNo}`;
+      const due = Math.max(0, Number(receiptModalStudent.totalFee || 0) - Number(receiptModalStudent.paidFee || 0));
+      const caption = `Official Fee Receipt from *${schoolInfo.name}*:\n• Student: *${receiptModalStudent.name}* (${receiptModalStudent.className}-${receiptModalStudent.section})\n• Net Payable Fee: ₹${Number(receiptModalStudent.totalFee).toLocaleString()}\n• Paid Amount: ₹${Number(receiptModalStudent.paidFee).toLocaleString()}\n• *Balance Due: ₹${due.toLocaleString()}*`;
+
+      if (type === 'png') {
+        await exportElementAsPNG(receiptRef.current, fileBase, 'Official Fee Receipt');
+      } else if (type === 'pdf') {
+        await exportElementAsPDF(receiptRef.current, fileBase, 'Official Fee Receipt PDF');
+      } else if (type === 'whatsapp') {
+        await shareElementToWhatsApp(receiptRef.current, fileBase, caption, receiptModalStudent.phone);
+      }
+    } catch (err) {
+      alert('Receipt export error: ' + (err?.message || 'Could not generate receipt'));
+    } finally {
+      setExportingStatus('');
+    }
+  };
+
   return (
     <div className="min-h-screen relative bg-slate-50 text-slate-800 pb-28">
+      {/* Global Toast */}
+      <AnimatePresence>
+        {exportingStatus && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed top-16 inset-x-4 z-50 max-w-xs mx-auto p-3 rounded-2xl bg-slate-900 text-white text-xs font-extrabold text-center shadow-2xl"
+          >
+            ✨ {exportingStatus}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Top Glass Header */}
       <header className="sticky top-0 z-30 backdrop-blur-xl bg-white/75 border-b border-white shadow-sm px-4 py-3 no-print">
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
@@ -303,11 +497,25 @@ export default function App() {
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               onClick={() => setActiveTab('admission')}
-              className="flex items-center gap-1 px-3.5 py-2 rounded-2xl bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white font-bold text-xs shadow-md active:scale-95 transition"
+              className="flex items-center gap-1 px-3 py-2 rounded-2xl bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white font-bold text-xs shadow-md active:scale-95 transition"
             >
-              <UserPlus className="w-4 h-4" />
-              <span>New Admission</span>
+              <UserPlus className="w-3.5 h-3.5" />
+              <span className="hidden xs:inline">Admission</span>
             </button>
+
+            <button
+              onClick={() => setShowAuditModal(true)}
+              title="Activity History & Recycle Bin"
+              className="relative p-2 rounded-2xl bg-violet-50 text-violet-700 hover:bg-violet-100 transition"
+            >
+              <History className="w-4 h-4" />
+              {trashedStudents.length > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-600 text-white text-[9px] font-black flex items-center justify-center">
+                  {trashedStudents.length}
+                </span>
+              )}
+            </button>
+
             <button
               onClick={() => setIsUnlocked(false)}
               title="Lock App"
@@ -335,8 +543,8 @@ export default function App() {
                   <button onClick={() => setActiveTab('admission')} className="px-3.5 py-2 rounded-xl bg-white text-violet-700 font-extrabold text-xs shadow">
                     + Enroll New Student
                   </button>
-                  <button onClick={() => setActiveTab('studio')} className="px-3.5 py-2 rounded-xl bg-white/20 text-white font-bold text-xs backdrop-blur-md">
-                    Admit, Result & TC Studio →
+                  <button onClick={() => setShowPromotionModal(true)} className="px-3.5 py-2 rounded-xl bg-white/20 text-white font-bold text-xs backdrop-blur-md flex items-center gap-1">
+                    <Users className="w-3.5 h-3.5" /> Class Promotion Wizard
                   </button>
                 </div>
               </div>
@@ -356,7 +564,7 @@ export default function App() {
                   <p className="text-[10px] font-bold text-slate-400 uppercase">Fee Collected</p>
                   <p className="text-xl font-black text-emerald-600">₹{totalCollectedFee.toLocaleString()}</p>
                 </div>
-                <div onClick={() => setActiveTab('fees')} className="p-4 rounded-3xl bg-white/85 border border-white shadow-md cursor-pointer">
+                <div onClick={() => { setFeeFilterStatus('pending'); setActiveTab('fees'); }} className="p-4 rounded-3xl bg-white/85 border border-white shadow-md cursor-pointer">
                   <div className="w-9 h-9 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center mb-2">
                     <AlertCircle className="w-4 h-4" />
                   </div>
@@ -382,6 +590,11 @@ export default function App() {
               subjects={subjects}
               onSaveStudent={(newStudent) => {
                 setStudents([newStudent, ...students]);
+                recordAudit(
+                  'ADMISSION',
+                  `Enrolled ${newStudent.name} in Class ${newStudent.className}-${newStudent.section}`,
+                  { studentId: newStudent.id }
+                );
                 setActiveTab('students');
               }}
               onCancel={() => setActiveTab('dashboard')}
@@ -419,7 +632,7 @@ export default function App() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                 {filteredStudents.map(student => {
-                  const due = student.totalFee - student.paidFee;
+                  const due = Math.max(0, student.totalFee - student.paidFee);
                   return (
                     <div key={student.id} className="p-4 rounded-3xl bg-white/90 border border-white shadow-md space-y-3">
                       <div className="flex items-start justify-between">
@@ -462,32 +675,54 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* 4. FEES (ADVANCED LEDGER & AUDIT LOG) */}
+          {/* 4. PRO FEES */}
           {activeTab === 'fees' && (
-            <motion.div key="fees" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-3">
-              {students.map(student => {
-                const due = student.totalFee - student.paidFee;
-                const percent = Math.round((student.paidFee / (student.totalFee || 1)) * 100);
+            <motion.div key="fees" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-3.5">
+              <div className="p-3.5 rounded-3xl bg-white/90 border border-white shadow-md space-y-2.5">
+                <div className="grid grid-cols-3 gap-1.5 bg-slate-100 p-1 rounded-2xl">
+                  {[
+                    { id: 'all', label: `All (${filteredStudents.length})` },
+                    { id: 'pending', label: `Defaulters (${filteredStudents.filter(s => s.totalFee - s.paidFee > 0).length})` },
+                    { id: 'paid', label: `Cleared (${filteredStudents.filter(s => s.totalFee - s.paidFee <= 0).length})` }
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setFeeFilterStatus(tab.id)}
+                      className={`py-2 rounded-xl text-xs font-extrabold transition ${
+                        feeFilterStatus === tab.id ? 'bg-violet-600 text-white shadow' : 'text-slate-600'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {filteredFeeStudents.map(student => {
+                const due = Math.max(0, student.totalFee - student.paidFee);
+                const percent = Math.min(100, Math.round((student.paidFee / (student.totalFee || 1)) * 100));
                 return (
                   <div key={student.id} className="p-4 rounded-3xl bg-white/90 border border-white shadow-md space-y-2.5">
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="font-extrabold text-sm text-slate-800">{student.name}</h3>
-                        <p className="text-xs text-slate-500">Class {student.className}-{student.section} • Paid ₹{student.paidFee.toLocaleString()} / ₹{student.totalFee.toLocaleString()}</p>
+                        <p className="text-xs text-slate-500">
+                          Class {student.className}-{student.section} (Roll #{student.rollNo}) • Paid <b>₹{Number(student.paidFee).toLocaleString()}</b> / ₹{Number(student.totalFee).toLocaleString()}
+                        </p>
                       </div>
                       <span className={`text-[10px] px-2.5 py-1 rounded-full font-extrabold ${due === 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
                         {due === 0 ? 'PAID' : `₹${due.toLocaleString()} DUE`}
                       </span>
                     </div>
                     <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
-                      <div className="h-full bg-emerald-500" style={{ width: `${percent}%` }} />
+                      <div className="h-full bg-emerald-500 transition-all" style={{ width: `${percent}%` }} />
                     </div>
                     <div className="flex flex-wrap gap-2 pt-1">
-                      <button onClick={() => setFeeManagerStudent(student)} className="px-3.5 py-1.5 rounded-xl bg-emerald-600 text-white font-bold text-xs flex items-center gap-1">
-                        <CreditCard className="w-3.5 h-3.5" /> Detailed Ledger & Installments
+                      <button onClick={() => setFeeManagerStudent(student)} className="px-3.5 py-2 rounded-xl bg-emerald-600 text-white font-bold text-xs flex items-center gap-1 shadow-sm">
+                        <CreditCard className="w-3.5 h-3.5" /> Pay / Discounts / Logs
                       </button>
-                      <button onClick={() => setReceiptModalStudent(student)} className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs flex items-center gap-1">
-                        <Printer className="w-3.5 h-3.5" /> Receipt
+                      <button onClick={() => setReceiptModalStudent(student)} className="px-3.5 py-2 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center gap-1 shadow-sm">
+                        <Printer className="w-3.5 h-3.5" /> Itemized Receipt
                       </button>
                     </div>
                   </div>
@@ -513,11 +748,12 @@ export default function App() {
                 setStudioMode('result');
                 setActiveTab('studio');
               }}
+              onOpenPromotionModal={() => setShowPromotionModal(true)}
               getStudentMetrics={getStudentMetrics}
             />
           )}
 
-          {/* 6. STUDIO (WITH PNG, PDF, WHATSAPP SHARING & PORTRAIT 3:4 ID CARD) */}
+          {/* 6. STUDIO */}
           {activeTab === 'studio' && currentStudioStudent && (
             <motion.div key="studio" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-4">
               <div className="p-3.5 rounded-3xl bg-white/90 border border-white shadow-md space-y-3 no-print">
@@ -551,30 +787,25 @@ export default function App() {
                   ))}
                 </div>
 
-                {/* Multi-Export Bar */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <button onClick={() => window.print()} className="py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center justify-center gap-1 shadow">
-                    <Printer className="w-3.5 h-3.5" /> Print
-                  </button>
-                  <button onClick={handleExportPNG} className="py-2.5 rounded-xl bg-violet-600 text-white font-bold text-xs flex items-center justify-center gap-1 shadow">
+                <div className="grid grid-cols-3 gap-2">
+                  <button onClick={() => runStudioExport('png')} className="py-2.5 rounded-xl bg-violet-600 text-white font-bold text-xs flex items-center justify-center gap-1 shadow">
                     <Image className="w-3.5 h-3.5" /> Save PNG
                   </button>
-                  <button onClick={handleExportPDF} className="py-2.5 rounded-xl bg-fuchsia-600 text-white font-bold text-xs flex items-center justify-center gap-1 shadow">
+                  <button onClick={() => runStudioExport('pdf')} className="py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center justify-center gap-1 shadow">
                     <Download className="w-3.5 h-3.5" /> Save PDF
                   </button>
-                  <button onClick={handleWhatsAppShare} className="py-2.5 rounded-xl bg-emerald-600 text-white font-bold text-xs flex items-center justify-center gap-1 shadow">
+                  <button onClick={() => runStudioExport('whatsapp')} className="py-2.5 rounded-xl bg-emerald-600 text-white font-bold text-xs flex items-center justify-center gap-1 shadow">
                     <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
                   </button>
                 </div>
               </div>
 
-              {/* RENDER CONTAINER FOR EXPORT */}
-              <div ref={studioRef} className="bg-white rounded-3xl p-1">
-                {/* RESULT CARD */}
+              <div ref={studioRef} className="bg-white rounded-3xl p-2">
+                {/* RESULT CARD (NOW WITH CLASS RANK!) */}
                 {studioMode === 'result' && (() => {
                   const m = getStudentMetrics(currentStudioStudent);
                   return (
-                    <div className="p-4 sm:p-6 rounded-3xl bg-white border-2 border-slate-200 shadow-xl print-only space-y-4 overflow-hidden">
+                    <div className="p-4 sm:p-6 rounded-3xl bg-white border-2 border-slate-200 shadow-xl space-y-4 overflow-hidden">
                       <div className="border-b-2 border-slate-800 pb-3 flex items-start justify-between gap-2">
                         <div className="flex items-center gap-3">
                           {currentStudioStudent.photo && (
@@ -589,8 +820,8 @@ export default function App() {
                           </div>
                         </div>
                         <div className="text-right shrink-0">
-                          <span className="text-[10px] font-bold text-slate-400 block">GRADE</span>
-                          <span className="text-2xl font-black text-violet-600">{m.grade}</span>
+                          <span className="text-[10px] font-bold text-slate-400 block">CLASS RANK</span>
+                          <span className="text-2xl font-black text-amber-600">#{m.classRank}</span>
                         </div>
                       </div>
 
@@ -608,9 +839,9 @@ export default function App() {
                           <p className="font-bold text-slate-800">{currentStudioStudent.parentName}</p>
                         </div>
                         <div>
-                          <p className="text-[10px] text-slate-400 font-bold uppercase">Result Status</p>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase">Grade & Status</p>
                           <p className={`font-black ${m.passed ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {m.passed ? 'PASSED' : 'RETEST'}
+                            {m.grade} ({m.passed ? 'PASSED' : 'RETEST'})
                           </p>
                         </div>
                       </div>
@@ -628,7 +859,9 @@ export default function App() {
                           </thead>
                           <tbody className="divide-y divide-slate-200">
                             {subjects.map(sub => {
-                              const score = Number(currentStudioStudent.marks?.[sub] ?? 80);
+                              const termKey = schoolInfo.examName.replace(/[^a-zA-Z0-9]/g, '_');
+                              const termMarks = currentStudioStudent.termMarks?.[termKey] || currentStudioStudent.marks || {};
+                              const score = Number(termMarks[sub] ?? 80);
                               return (
                                 <tr key={sub}>
                                   <td className="p-2.5 font-bold text-slate-800">{sub}</td>
@@ -659,9 +892,8 @@ export default function App() {
                   );
                 })()}
 
-                {/* ADMIT CARD */}
                 {studioMode === 'admit' && (
-                  <div className="p-4 sm:p-6 rounded-3xl bg-white border-2 border-slate-200 shadow-xl print-only space-y-4 overflow-hidden">
+                  <div className="p-4 sm:p-6 rounded-3xl bg-white border-2 border-slate-200 shadow-xl space-y-4 overflow-hidden">
                     <div className="border-b-2 border-slate-800 pb-3 flex items-start justify-between gap-2">
                       <div className="flex items-center gap-3">
                         {currentStudioStudent.photo && (
@@ -710,9 +942,8 @@ export default function App() {
                   </div>
                 )}
 
-                {/* ID CARD (PORTRAIT 3:4 RATIO WITH PARENTS NAME, ADDRESS & AADHAAR) */}
                 {studioMode === 'idcard' && (
-                  <div className="max-w-[280px] mx-auto rounded-3xl overflow-hidden bg-white border-2 border-slate-300 shadow-2xl print-only aspect-[3/4] flex flex-col justify-between">
+                  <div className="max-w-[280px] mx-auto rounded-3xl overflow-hidden bg-white border-2 border-slate-300 shadow-2xl aspect-[3/4] flex flex-col justify-between">
                     <div className="p-4 bg-gradient-to-br from-violet-600 via-fuchsia-600 to-orange-500 text-white text-center">
                       <h3 className="font-black text-xs uppercase tracking-wide">{schoolInfo.name}</h3>
                       <p className="text-[9px] text-white/80 font-semibold">STUDENT ID • {schoolInfo.session}</p>
@@ -758,9 +989,8 @@ export default function App() {
                   </div>
                 )}
 
-                {/* TRANSFER CERTIFICATE (TC) */}
                 {studioMode === 'tc' && (
-                  <div className="p-5 sm:p-8 rounded-3xl bg-white border-2 border-slate-300 shadow-xl print-only space-y-5 text-xs">
+                  <div className="p-5 sm:p-8 rounded-3xl bg-white border-2 border-slate-300 shadow-xl space-y-5 text-xs">
                     <div className="text-center border-b-2 border-slate-800 pb-4 space-y-1">
                       <span className="inline-block text-[9px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded bg-amber-600 text-white">
                         OFFICIAL SCHOOL LEAVING / TRANSFER CERTIFICATE
@@ -792,9 +1022,8 @@ export default function App() {
                   </div>
                 )}
 
-                {/* BONAFIDE CERTIFICATE */}
                 {studioMode === 'bonafide' && (
-                  <div className="p-6 sm:p-8 rounded-3xl bg-white border-2 border-slate-300 shadow-xl print-only space-y-6 text-xs">
+                  <div className="p-6 sm:p-8 rounded-3xl bg-white border-2 border-slate-300 shadow-xl space-y-6 text-xs">
                     <div className="text-center border-b-2 border-slate-800 pb-4 space-y-1">
                       <span className="inline-block text-[9px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded bg-violet-600 text-white">
                         BONAFIDE & CHARACTER CERTIFICATE
@@ -843,6 +1072,32 @@ export default function App() {
         </AnimatePresence>
       </main>
 
+      {/* Global Audit History & Recycle Bin Modal */}
+      <AnimatePresence>
+        {showAuditModal && (
+          <AuditCenterModal
+            auditLogs={auditLogs}
+            trashedStudents={trashedStudents}
+            onClose={() => setShowAuditModal(false)}
+            onUndoAction={handleUndoAction}
+            onRestoreStudent={handleRestoreStudent}
+            onPermanentDeleteStudent={handlePermanentDeleteStudent}
+            onClearLogs={() => setAuditLogs([])}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Class Promotion Modal */}
+      <AnimatePresence>
+        {showPromotionModal && (
+          <ClassPromotionModal
+            students={students}
+            onClose={() => setShowPromotionModal(false)}
+            onPromoteClass={handlePromoteClassBatch}
+          />
+        )}
+      </AnimatePresence>
+
       {/* 360° Student Detail & Edit Modal */}
       <AnimatePresence>
         {detailModalStudent && (
@@ -853,10 +1108,18 @@ export default function App() {
             metrics={getStudentMetrics(detailModalStudent)}
             onClose={() => setDetailModalStudent(null)}
             onUpdateStudent={(updated) => {
+              const previousStudent = students.find(s => s.id === updated.id);
               setStudents(students.map(s => s.id === updated.id ? updated : s));
               setDetailModalStudent(updated);
+              if (previousStudent) {
+                recordAudit(
+                  'PROFILE_EDIT',
+                  `Edited profile details of ${updated.name}`,
+                  { previousStudent }
+                );
+              }
             }}
-            onDeleteStudent={(id) => setStudents(students.filter(s => s.id !== id))}
+            onDeleteStudent={handleSoftDeleteStudent}
             onOpenStudio={(st, mode) => {
               setSelectedStudent(st);
               setStudioMode(mode);
@@ -867,16 +1130,18 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Advanced Fee Manager Modal with Audit Trail */}
+      {/* Pro Fee Manager Modal */}
       <AnimatePresence>
         {feeManagerStudent && (
           <FeeManagerModal
             student={feeManagerStudent}
             schoolInfo={schoolInfo}
+            classFeeBreakdown={feeStructure[feeManagerStudent.className]}
             feeLogs={feeLogs}
             onClose={() => setFeeManagerStudent(null)}
             onRecordPayment={handleRecordPayment}
             onDeleteLog={handleDeleteFeeLog}
+            onUpdateFeeAdjustments={handleUpdateFeeAdjustments}
             onOpenReceipt={(st) => {
               setFeeManagerStudent(null);
               setReceiptModalStudent(st);
@@ -885,30 +1150,110 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Receipt Modal */}
+      {/* Itemized Official Fee Receipt Modal */}
       <AnimatePresence>
-        {receiptModalStudent && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-md flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
-              <div className="flex justify-between items-center border-b pb-3">
-                <div>
-                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">OFFICIAL FEE RECEIPT</span>
-                  <h3 className="font-black text-slate-900 mt-1">{schoolInfo.name}</h3>
+        {receiptModalStudent && (() => {
+          const cf = feeStructure[receiptModalStudent.className] || {
+            admissionFee: 8000, tuitionFee: 32000, examFee: 3000, annualCharges: 5000
+          };
+          const recentStudentLogs = feeLogs.filter(l => l.studentId === receiptModalStudent.id).slice(0, 3);
+          const due = Math.max(0, Number(receiptModalStudent.totalFee) - Number(receiptModalStudent.paidFee));
+
+          return (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-md flex items-center justify-center p-3.5">
+              <div className="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl space-y-4 max-h-[92vh] overflow-y-auto">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-extrabold text-slate-500">Itemized Fee Receipt Preview</span>
+                  <button onClick={() => setReceiptModalStudent(null)} className="p-1.5 rounded-xl bg-slate-100"><X className="w-4 h-4" /></button>
                 </div>
-                <button onClick={() => setReceiptModalStudent(null)} className="p-1.5 rounded-xl bg-slate-100 no-print"><X className="w-4 h-4" /></button>
+
+                <div ref={receiptRef} className="p-5 rounded-2xl bg-white border-2 border-slate-200 space-y-3.5 text-xs">
+                  <div className="border-b-2 border-slate-800 pb-3 flex justify-between items-start">
+                    <div>
+                      <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-emerald-600 text-white">
+                        OFFICIAL FEE RECEIPT
+                      </span>
+                      <h3 className="font-black text-base text-slate-900 mt-1">{schoolInfo.name}</h3>
+                      <p className="text-[10px] text-slate-500">{schoolInfo.address}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[9px] font-bold text-slate-400">RECEIPT NO</p>
+                      <p className="font-mono font-black text-slate-800">REC-{receiptModalStudent.rollNo}-{new Date().getFullYear()}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-1.5 bg-slate-50 p-3 rounded-xl border border-slate-200 text-[11px]">
+                    <div><span className="text-slate-400">Student:</span> <b>{receiptModalStudent.name}</b></div>
+                    <div><span className="text-slate-400">Class:</span> <b>{receiptModalStudent.className}-{receiptModalStudent.section} (#{receiptModalStudent.rollNo})</b></div>
+                    <div><span className="text-slate-400">Guardian:</span> <b>{receiptModalStudent.parentName || 'N/A'}</b></div>
+                    <div><span className="text-slate-400">Session:</span> <b>{schoolInfo.session}</b></div>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 overflow-hidden">
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="bg-slate-900 text-white">
+                          <th className="p-2 text-left">Fee Particular</th>
+                          <th className="p-2 text-right">Amount (₹)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        <tr><td className="p-2">Admission & Registration Fee</td><td className="p-2 text-right font-bold">{cf.admissionFee.toLocaleString()}</td></tr>
+                        <tr><td className="p-2">Annual Tuition Fee</td><td className="p-2 text-right font-bold">{cf.tuitionFee.toLocaleString()}</td></tr>
+                        <tr><td className="p-2">Examination & Lab Fee</td><td className="p-2 text-right font-bold">{cf.examFee.toLocaleString()}</td></tr>
+                        <tr><td className="p-2">Annual Development Charges</td><td className="p-2 text-right font-bold">{cf.annualCharges.toLocaleString()}</td></tr>
+                        {Number(receiptModalStudent.transportFee) > 0 && (
+                          <tr><td className="p-2">Transport / Bus Fee</td><td className="p-2 text-right font-bold">+{Number(receiptModalStudent.transportFee).toLocaleString()}</td></tr>
+                        )}
+                        {Number(receiptModalStudent.lateFine) > 0 && (
+                          <tr><td className="p-2 text-rose-600">Late Fine / Misc</td><td className="p-2 text-right font-bold text-rose-600">+{Number(receiptModalStudent.lateFine).toLocaleString()}</td></tr>
+                        )}
+                        {Number(receiptModalStudent.discount) > 0 && (
+                          <tr><td className="p-2 text-emerald-700">Scholarship / Concession</td><td className="p-2 text-right font-bold text-emerald-700">-{Number(receiptModalStudent.discount).toLocaleString()}</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {recentStudentLogs.length > 0 && (
+                    <div className="bg-emerald-50/70 p-2.5 rounded-xl border border-emerald-200 space-y-1 text-[10px]">
+                      <p className="font-extrabold text-emerald-800 uppercase">Recent Installments Received:</p>
+                      {recentStudentLogs.map(l => (
+                        <div key={l.id} className="flex justify-between text-emerald-900">
+                          <span>{new Date(l.date).toLocaleDateString('en-IN')} ({l.remark})</span>
+                          <b>₹{l.amount.toLocaleString()}</b>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="space-y-1 pt-1 border-t">
+                    <div className="flex justify-between text-slate-600"><span>Net Payable Fee:</span><b>₹{Number(receiptModalStudent.totalFee).toLocaleString()}</b></div>
+                    <div className="flex justify-between text-emerald-700 text-sm"><span>Total Paid to Date:</span><b className="font-black">₹{Number(receiptModalStudent.paidFee).toLocaleString()}</b></div>
+                    <div className="flex justify-between text-rose-600 border-t pt-1"><span>Balance Due:</span><b className="font-black">₹{due.toLocaleString()}</b></div>
+                  </div>
+
+                  <div className="pt-3 border-t border-dashed flex justify-between text-[10px] text-slate-500">
+                    <span>Date: {new Date().toLocaleDateString('en-IN')}</span>
+                    <span className="font-bold text-slate-800">Authorized Cashier / Seal</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <button onClick={() => runReceiptExport('png')} className="py-2.5 rounded-xl bg-violet-600 text-white font-bold text-xs flex items-center justify-center gap-1 shadow">
+                    <Image className="w-3.5 h-3.5" /> Save PNG
+                  </button>
+                  <button onClick={() => runReceiptExport('pdf')} className="py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center justify-center gap-1 shadow">
+                    <Download className="w-3.5 h-3.5" /> Save PDF
+                  </button>
+                  <button onClick={() => runReceiptExport('whatsapp')} className="py-2.5 rounded-xl bg-emerald-600 text-white font-bold text-xs flex items-center justify-center gap-1 shadow">
+                    <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
+                  </button>
+                </div>
               </div>
-              <div className="space-y-2 text-xs">
-                <div className="flex justify-between"><span>Student:</span><b>{receiptModalStudent.name} ({receiptModalStudent.className}-{receiptModalStudent.section})</b></div>
-                <div className="flex justify-between"><span>Total Annual Fee:</span><b>₹{receiptModalStudent.totalFee.toLocaleString()}</b></div>
-                <div className="flex justify-between text-emerald-600"><span>Paid Amount:</span><b>₹{receiptModalStudent.paidFee.toLocaleString()}</b></div>
-                <div className="flex justify-between text-rose-600"><span>Balance Due:</span><b>₹{(receiptModalStudent.totalFee - receiptModalStudent.paidFee).toLocaleString()}</b></div>
-              </div>
-              <button onClick={() => window.print()} className="w-full py-2.5 rounded-2xl bg-slate-900 text-white font-bold text-xs flex items-center justify-center gap-1.5 no-print">
-                <Printer className="w-4 h-4" /> Print / Save PDF
-              </button>
-            </div>
-          </motion.div>
-        )}
+            </motion.div>
+          );
+        })()}
       </AnimatePresence>
 
       {/* Bottom Floating Navigation Bar */}
