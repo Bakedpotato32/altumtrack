@@ -1,0 +1,43 @@
+name: Build Altumtrack Android APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Java 21 (Required for Capacitor Android)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install Dependencies & Build Web App
+        run: |
+          npm install
+          npm run build
+          npx cap sync android
+
+      - name: Make Gradlew Executable & Build Debug APK
+        working-directory: ./android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload Compiled Altumtrack APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Altumtrack-ERP-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk

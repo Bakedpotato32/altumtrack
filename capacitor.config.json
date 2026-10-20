@@ -1,0 +1,6 @@
+{
+  "appId": "com.altumtrack.erp",
+  "appName": "Altumtrack",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}
