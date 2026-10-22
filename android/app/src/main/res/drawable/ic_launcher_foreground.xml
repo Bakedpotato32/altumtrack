@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Academic Cap Diamond -->
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M54,32 L84,46 L54,60 L24,46 Z"/>
+    <!-- Lower Cap Arch -->
+    <path
+        android:fillColor="#f8fafc"
+        android:pathData="M34,53 L34,68 C34,76 74,76 74,68 L74,53 L54,62 Z"/>
+    <!-- Gold Tassel & Crest Ribbon -->
+    <path
+        android:fillColor="#f59e0b"
+        android:pathData="M78,48 L82,48 L84,65 L80,65 Z"/>
+    <!-- Gold Center Button -->
+    <path
+        android:fillColor="#fbbf24"
+        android:pathData="M54,42m-4,0a4,4 0,1 1,8 0a4,4 0,1 1,-8 0"/>
+    <!-- Emblem Stars -->
+    <path
+        android:fillColor="#fbbf24"
+        android:pathData="M54,77 L56,82 L61,82 L57,85 L59,90 L54,87 L49,90 L51,85 L47,82 L52,82 Z"/>
+</vector>

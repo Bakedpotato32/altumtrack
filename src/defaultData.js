@@ -17,6 +17,31 @@ export const DEFAULT_SCHOOL = {
 
 export const DEFAULT_CLASSES = ['Nursery', 'LKG', 'UKG', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th', '11th', '12th'];
 
+export const DEFAULT_CLASS_SUBJECTS = {
+  'Nursery': ['English', 'Rhymes', 'Mathematics', 'Drawing', 'General Knowledge'],
+  'LKG':     ['English', 'Rhymes', 'Mathematics', 'Drawing', 'General Knowledge'],
+  'UKG':     ['English', 'Hindi', 'Mathematics', 'EVS', 'Drawing'],
+  '1st':     ['English', 'Hindi', 'Mathematics', 'EVS', 'Drawing'],
+  '2nd':     ['English', 'Hindi', 'Mathematics', 'EVS', 'Computer'],
+  '3rd':     ['English', 'Hindi', 'Mathematics', 'Science', 'Social Studies'],
+  '4th':     ['English', 'Hindi', 'Mathematics', 'Science', 'Social Studies'],
+  '5th':     ['English', 'Hindi', 'Mathematics', 'Science', 'Social Studies'],
+  '6th':     ['English', 'Hindi', 'Mathematics', 'Science', 'Social Science', 'Sanskrit'],
+  '7th':     ['English', 'Hindi', 'Mathematics', 'Science', 'Social Science', 'Sanskrit'],
+  '8th':     ['English', 'Hindi', 'Mathematics', 'Science', 'Social Science', 'Sanskrit'],
+  '9th':     ['Mathematics', 'Science', 'Social Science', 'English', 'Hindi', 'IT/Computer'],
+  '10th':    ['Mathematics', 'Science', 'Social Science', 'English', 'Hindi', 'IT/Computer'],
+  '11th':    ['Physics', 'Chemistry', 'Mathematics', 'English', 'Computer Science'],
+  '12th':    ['Physics', 'Chemistry', 'Mathematics', 'English', 'Computer Science']
+};
+
+export const DEFAULT_CO_SCHOLASTIC = [
+  'Work Education & Skill',
+  'Art & Cultural Education',
+  'Health & Physical Education',
+  'Discipline & Ethical Conduct'
+];
+
 export const DEFAULT_FEE_STRUCTURE = {
   'Nursery': { admissionFee: 5000, tuitionFee: 18000, examFee: 1500, annualCharges: 3500 },
   'LKG':     { admissionFee: 5000, tuitionFee: 18000, examFee: 1500, annualCharges: 3500 },
@@ -35,8 +60,6 @@ export const DEFAULT_FEE_STRUCTURE = {
   '12th':    { admissionFee: 10000, tuitionFee: 42000, examFee: 4500, annualCharges: 6500 },
 };
 
-export const DEFAULT_SUBJECTS = ['Math', 'Science', 'English', 'Social', 'Computer'];
-
 export const INITIAL_STUDENTS = [
   {
     id: 'ALT-2026-001',
@@ -54,13 +77,18 @@ export const INITIAL_STUDENTS = [
     parentAadhar: '7741-9902-1123',
     phone: '9876543210',
     address: 'Sector 14, Green Park',
-    previousSchool: 'St. Xavier Junior School',
-    previousGrade: '9th (92%)',
     busRoute: 'Route 4 - City Center',
     totalFee: 52000,
     paidFee: 52000,
     avatarColor: 'from-violet-500 to-fuchsia-500',
-    marks: { Math: 95, Science: 92, English: 88, Social: 90, Computer: 98 }
+    teacherRemarks: 'Exceptional academic dedication and sharp analytical thinking.',
+    coScholastic: {
+      'Work Education & Skill': 'A',
+      'Art & Cultural Education': 'A',
+      'Health & Physical Education': 'A',
+      'Discipline & Ethical Conduct': 'A'
+    },
+    marks: { 'Mathematics': 95, 'Science': 92, 'Social Science': 90, 'English': 88, 'Hindi': 90, 'IT/Computer': 98 }
   },
   {
     id: 'ALT-2026-002',
@@ -78,12 +106,17 @@ export const INITIAL_STUDENTS = [
     parentAadhar: '8812-3349-0019',
     phone: '9812345678',
     address: '42 Sunrise Avenue',
-    previousSchool: 'Delhi Public Academy',
-    previousGrade: '9th (89%)',
     busRoute: 'Route 1 - North Campus',
     totalFee: 52000,
     paidFee: 32000,
     avatarColor: 'from-cyan-500 to-blue-500',
-    marks: { Math: 84, Science: 89, English: 94, Social: 86, Computer: 91 }
+    teacherRemarks: 'Active participant in discussions with strong language command.',
+    coScholastic: {
+      'Work Education & Skill': 'A',
+      'Art & Cultural Education': 'A',
+      'Health & Physical Education': 'B',
+      'Discipline & Ethical Conduct': 'A'
+    },
+    marks: { 'Mathematics': 84, 'Science': 89, 'Social Science': 86, 'English': 94, 'Hindi': 88, 'IT/Computer': 91 }
   }
 ];
