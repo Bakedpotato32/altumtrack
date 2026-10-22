@@ -1,14 +1,17 @@
 import React, { useState, useRef } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, Printer, Layers, Award, AlertCircle, Image, Download,
-  MessageCircle, Users, CheckCircle2, Calendar, FileText
+  MessageCircle, Users, CheckCircle2, Calendar, FileText, Search, Sparkles
 } from 'lucide-react';
 import {
   exportElementAsPNG,
   exportElementAsPDF,
-  shareElementToWhatsApp
+  exportBatchElementsAsPDF,
+  sendWhatsAppWithImage
 } from '../utils/exportHelper';
+import GlassSelect from './GlassSelect';
+import VerificationQRCode from './VerificationQRCode';
 
 export default function BulkPrintStudioModal({
   classes,
@@ -22,19 +25,26 @@ export default function BulkPrintStudioModal({
 }) {
   const [selectedClass, setSelectedClass] = useState('10th');
   const [docType, setDocType] = useState('merit'); // merit | defaulter | admit_batch
-  const [exportingStatus, setExportingStatus] = useState('');
+  const [searchStudent, setSearchStudent] = useState('');
+  
+  // Progress modal state for batch exports
+  const [exportProgress, setExportProgress] = useState(null); // { current, total, label }
 
   const bulkRef = useRef(null);
+  const cardRefs = useRef([]);
 
-  // Filter students by selected class
-  const classStudents = students.filter(s => s.className === selectedClass);
+  const classStudents = students.filter(s => {
+    const matchClass = s.className === selectedClass;
+    const matchSearch = !searchStudent ||
+      s.name.toLowerCase().includes(searchStudent.toLowerCase()) ||
+      s.rollNo.includes(searchStudent);
+    return matchClass && matchSearch;
+  });
 
-  // Ranked students for Result Gazette
   const rankedClassStudents = [...classStudents].sort((a, b) => {
     return getStudentMetrics(b).percentage - getStudentMetrics(a).percentage;
   });
 
-  // Defaulters list for selected class
   const defaulterStudents = classStudents.filter(s => {
     return (Number(s.totalFee || 0) - Number(s.paidFee || 0)) > 0;
   });
@@ -59,24 +69,48 @@ export default function BulkPrintStudioModal({
     return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
-  const handleExport = async (type) => {
-    if (!bulkRef.current) return;
-    try {
-      setExportingStatus(`Exporting ${type.toUpperCase()}...`);
-      const fileBase = `Class_${selectedClass}_${docType.toUpperCase()}_Altumtrack`;
-      const caption = `Official *${docType.toUpperCase().replace('_', ' ')}* for *Class ${selectedClass}* from *${schoolInfo.name}* (${schoolInfo.session}).`;
+  const getSchoolDisplayName = () => {
+    return (schoolInfo?.name || 'Altum International Academy').replace(/altumisbest/gi, '').trim() || 'Altum International Academy';
+  };
 
+  // High-performance batch export handler
+  const handleExport = async (type) => {
+    try {
+      const fileBase = `Class_${selectedClass}_${docType.toUpperCase()}_Altumtrack`;
+      const caption = `Official *${docType.toUpperCase().replace('_', ' ')}* for *Class ${selectedClass}* from *${getSchoolDisplayName()}* (${schoolInfo.session}).`;
+
+      if (docType === 'admit_batch') {
+        // Collect individual card nodes
+        const activeCards = cardRefs.current.filter(Boolean);
+        if (activeCards.length === 0) {
+          alert('No students to export.');
+          return;
+        }
+
+        if (type === 'pdf') {
+          setExportProgress({ current: 1, total: activeCards.length, label: 'Building Multi-Page PDF' });
+          await exportBatchElementsAsPDF(activeCards, fileBase, (current, total) => {
+            setExportProgress({ current, total, label: 'Rendering Student Admit Cards' });
+          });
+          setExportProgress(null);
+          return;
+        }
+      }
+
+      // Standard export for Merit Gazette / Defaulter Sheet
       if (type === 'png') {
+        setExportProgress({ current: 1, total: 1, label: 'Rendering High-Resolution Image' });
         await exportElementAsPNG(bulkRef.current, fileBase, `Class ${selectedClass} ${docType}`);
       } else if (type === 'pdf') {
+        setExportProgress({ current: 1, total: 1, label: 'Formatting Multi-Page A4 PDF' });
         await exportElementAsPDF(bulkRef.current, fileBase, `Class ${selectedClass} ${docType} PDF`);
       } else if (type === 'whatsapp') {
-        await shareElementToWhatsApp(bulkRef.current, fileBase, caption, '');
+        await sendWhatsAppWithImage(bulkRef.current, fileBase, caption, '', 'native_share');
       }
     } catch (err) {
       alert('Export failed: ' + (err?.message || 'Error generating document'));
     } finally {
-      setExportingStatus('');
+      setExportProgress(null);
     }
   };
 
@@ -91,7 +125,7 @@ export default function BulkPrintStudioModal({
         initial={{ scale: 0.94, y: 15 }}
         animate={{ scale: 1, y: 0 }}
         exit={{ scale: 0.94, y: 15 }}
-        className="bg-white rounded-3xl max-w-4xl w-full p-4 sm:p-6 shadow-2xl border border-white max-h-[94vh] overflow-y-auto space-y-4 text-xs"
+        className="bg-white rounded-[32px] max-w-4xl w-full p-4 sm:p-6 shadow-2xl border border-white max-h-[94vh] overflow-y-auto space-y-4 text-xs"
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b pb-3">
@@ -100,8 +134,8 @@ export default function BulkPrintStudioModal({
               <Layers className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-black text-base text-slate-900">Bulk Class Print & Gazette Studio</h3>
-              <p className="text-[11px] text-slate-500">Generate class-wide Merit Gazettes, Defaulter Sheets & Batch Admit Cards</p>
+              <h3 className="font-black text-base text-slate-900">Bulk Print & Gazette Studio</h3>
+              <p className="text-[11px] text-slate-500">Multi-page A4 PDFs, Gazettes & Batch Admit Cards</p>
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-xl bg-slate-100 text-slate-600">
@@ -109,41 +143,55 @@ export default function BulkPrintStudioModal({
           </button>
         </div>
 
-        {exportingStatus && (
-          <div className="p-2.5 rounded-xl bg-slate-900 text-white font-extrabold text-center">
-            ✨ {exportingStatus}
-          </div>
-        )}
-
-        {/* Controls: Class Selector & Document Type */}
-        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between bg-slate-50 p-3 rounded-2xl border">
-          {/* Class Selector */}
-          <div className="flex items-center gap-2">
-            <label className="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">Target Class:</label>
-            <select
-              value={selectedClass}
-              onChange={e => setSelectedClass(e.target.value)}
-              className="px-3 py-1.5 rounded-xl bg-white border font-bold text-slate-800"
+        {/* Export Progress Overlay */}
+        <AnimatePresence>
+          {exportProgress && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="p-3.5 rounded-2xl bg-slate-900 text-white flex items-center justify-between gap-3 shadow-xl"
             >
-              {classes.map(c => (
-                <option key={c} value={c}>Class {c} ({students.filter(s => s.className === c).length} Students)</option>
-              ))}
-            </select>
+              <div className="flex items-center gap-2.5">
+                <Sparkles className="w-4 h-4 text-amber-400 animate-spin" />
+                <div>
+                  <p className="font-black text-xs">{exportProgress.label}</p>
+                  <p className="text-[10px] text-slate-400">Processing page {exportProgress.current} of {exportProgress.total}...</p>
+                </div>
+              </div>
+              <div className="text-right font-mono font-black text-xs text-amber-400">
+                {Math.round((exportProgress.current / exportProgress.total) * 100)}%
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Controls Bar: Class Selection + Document Type + Search */}
+        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between bg-slate-50 p-3 rounded-2xl border">
+          <div className="w-full sm:w-56">
+            <GlassSelect
+              value={selectedClass}
+              onChange={setSelectedClass}
+              options={classes.map(c => ({
+                value: c,
+                label: `Class ${c} (${students.filter(s => s.className === c).length} Students)`
+              }))}
+              title="Target Class"
+            />
           </div>
 
-          {/* Doc Type Selector */}
           <div className="grid grid-cols-3 gap-1 bg-slate-200/70 p-1 rounded-xl">
             {[
               { id: 'merit', label: 'Merit Gazette', icon: Award },
               { id: 'defaulter', label: 'Defaulter Sheet', icon: AlertCircle },
-              { id: 'admit_batch', label: 'Batch Admit Cards', icon: Printer }
+              { id: 'admit_batch', label: 'Batch Admit', icon: Printer }
             ].map(t => {
               const Icon = t.icon;
               return (
                 <button
                   key={t.id}
                   onClick={() => setDocType(t.id)}
-                  className={`py-1.5 px-2.5 rounded-lg font-bold flex items-center justify-center gap-1 transition ${
+                  className={`py-1.5 px-2.5 rounded-lg font-black flex items-center justify-center gap-1 transition ${
                     docType === t.id ? 'bg-violet-600 text-white shadow' : 'text-slate-600'
                   }`}
                 >
@@ -159,98 +207,93 @@ export default function BulkPrintStudioModal({
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <button
             onClick={() => window.print()}
-            className="py-2.5 rounded-xl bg-slate-900 text-white font-bold flex items-center justify-center gap-1 shadow active:scale-95 transition"
+            className="py-2.5 rounded-xl bg-slate-900 text-white font-black flex items-center justify-center gap-1.5 shadow active:scale-95 transition"
           >
-            <Printer className="w-3.5 h-3.5" /> Print / System PDF
+            <Printer className="w-3.5 h-3.5 text-amber-400" /> Print System PDF
           </button>
           <button
             onClick={() => handleExport('png')}
-            className="py-2.5 rounded-xl bg-violet-600 text-white font-bold flex items-center justify-center gap-1 shadow active:scale-95 transition"
+            className="py-2.5 rounded-xl bg-violet-600 text-white font-black flex items-center justify-center gap-1.5 shadow active:scale-95 transition"
           >
-            <Image className="w-3.5 h-3.5" /> Save PNG
+            <Image className="w-3.5 h-3.5" /> Save Clean PNG
           </button>
           <button
             onClick={() => handleExport('pdf')}
-            className="py-2.5 rounded-xl bg-fuchsia-600 text-white font-bold flex items-center justify-center gap-1 shadow active:scale-95 transition"
+            className="py-2.5 rounded-xl bg-fuchsia-600 text-white font-black flex items-center justify-center gap-1.5 shadow active:scale-95 transition"
           >
-            <Download className="w-3.5 h-3.5" /> Export PDF File
+            <Download className="w-3.5 h-3.5" /> Multi-Page PDF
           </button>
           <button
             onClick={() => handleExport('whatsapp')}
-            className="py-2.5 rounded-xl bg-emerald-600 text-white font-bold flex items-center justify-center gap-1 shadow active:scale-95 transition"
+            className="py-2.5 rounded-xl bg-emerald-600 text-white font-black flex items-center justify-center gap-1.5 shadow active:scale-95 transition"
           >
             <MessageCircle className="w-3.5 h-3.5" /> WhatsApp Sheet
           </button>
         </div>
 
-        {/* ================= BULK PREVIEW CANVAS ================= */}
-        <div ref={bulkRef} className="bg-white p-2 rounded-2xl">
-          {/* ================= 1. MERIT LIST / RESULT GAZETTE ================= */}
+        {/* PREVIEW CONTAINER */}
+        <div className="bg-slate-100 p-2 sm:p-4 rounded-3xl overflow-x-auto">
+          {/* 1. MERIT LIST / RESULT GAZETTE */}
           {docType === 'merit' && (
-            <div className="p-5 sm:p-7 rounded-3xl bg-white border-2 border-slate-300 shadow-xl space-y-4">
-              <div className="border-b-2 border-slate-900 pb-3 flex justify-between items-start">
-                <div className="flex items-center gap-3">
-                  {schoolInfo.logo && (
-                    <img src={schoolInfo.logo} alt="Logo" className="w-14 h-14 rounded-2xl object-cover border" />
-                  )}
-                  <div>
-                    <span className="inline-block text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-violet-600 text-white">
-                      OFFICIAL RESULT GAZETTE & MERIT RANK LIST
-                    </span>
-                    <h2 className="text-base sm:text-xl font-black text-slate-900 mt-1">{schoolInfo.name}</h2>
-                    <p className="text-[11px] text-slate-500 font-semibold">
-                      {schoolInfo.examName} • Academic Session {schoolInfo.session}
-                    </p>
-                  </div>
+            <div ref={bulkRef} className="p-6 sm:p-8 rounded-[32px] bg-white border-2 border-slate-300 shadow-xl space-y-4 max-w-3xl mx-auto">
+              <div className="border-b-2 border-slate-900 pb-3.5 flex justify-between items-start gap-3">
+                <div>
+                  <span className="inline-block text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded bg-violet-600 text-white">
+                    OFFICIAL RESULT GAZETTE & MERIT RANK LIST
+                  </span>
+                  <h2 className="text-lg sm:text-2xl font-black text-slate-900 mt-1.5">{getSchoolDisplayName()}</h2>
+                  <p className="text-[11px] text-slate-500 font-bold">
+                    {schoolInfo.examName} • Academic Session {schoolInfo.session}
+                  </p>
                 </div>
                 <div className="text-right">
                   <span className="px-3 py-1 rounded-xl bg-violet-100 text-violet-800 font-black text-xs">
                     Class {selectedClass}
                   </span>
-                  <p className="text-[10px] text-slate-400 mt-1">{classStudents.length} Candidates</p>
+                  <p className="text-[10px] text-slate-400 font-bold mt-1">{classStudents.length} Candidates</p>
                 </div>
               </div>
 
               {rankedClassStudents.length === 0 ? (
-                <p className="text-center text-slate-400 py-8">No students found enrolled in Class {selectedClass}.</p>
+                <p className="text-center text-slate-400 py-8 font-bold">No students found enrolled in Class {selectedClass}.</p>
               ) : (
-                <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                <div className="rounded-2xl border border-slate-200 overflow-hidden">
                   <table className="w-full text-left border-collapse text-[11px]">
                     <thead>
                       <tr className="bg-slate-900 text-white">
                         <th className="p-2.5 text-center">Rank</th>
                         <th className="p-2.5 text-center">Roll</th>
-                        <th className="p-2.5">Student Name</th>
+                        <th className="p-2.5">Candidate Name</th>
                         {subjects.map(s => (
                           <th key={s} className="p-2.5 text-center">{s.slice(0, 4)}</th>
                         ))}
                         <th className="p-2.5 text-center">Total</th>
                         <th className="p-2.5 text-center">%</th>
                         <th className="p-2.5 text-center">Grade</th>
-                        <th className="p-2.5 text-center">Status</th>
+                        <th className="p-2.5 text-center">Result</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
                       {rankedClassStudents.map((st, idx) => {
                         const m = getStudentMetrics(st);
-                        const termKey = schoolInfo.examName.replace(/[^a-zA-Z0-9]/g, '_');
+                        const termKey = (schoolInfo.examName || '').replace(/[^a-zA-Z0-9]/g, '_');
                         const termMarks = st.termMarks?.[termKey] || st.marks || {};
                         return (
-                          <tr key={st.id} className={idx < 3 ? 'bg-amber-50/50 font-semibold' : 'bg-white'}>
-                            <td className="p-2 text-center font-black">
+                          <tr key={st.id} className={idx < 3 ? 'bg-amber-50/60 font-semibold' : 'bg-white'}>
+                            <td className="p-2.5 text-center font-black">
                               {idx === 0 ? '🥇 #1' : idx === 1 ? '🥈 #2' : idx === 2 ? '🥉 #3' : `#${idx + 1}`}
                             </td>
-                            <td className="p-2 text-center font-bold text-slate-500">#{st.rollNo}</td>
-                            <td className="p-2 font-extrabold text-slate-900">{st.name}</td>
+                            <td className="p-2.5 text-center font-bold text-slate-500">#{st.rollNo}</td>
+                            <td className="p-2.5 font-black text-slate-900">{st.name}</td>
                             {subjects.map(sub => (
-                              <td key={sub} className="p-2 text-center text-slate-700">
+                              <td key={sub} className="p-2.5 text-center text-slate-700">
                                 {termMarks[sub] ?? 80}
                               </td>
                             ))}
-                            <td className="p-2 text-center font-black text-slate-900">{m.total}/{m.maxTotal}</td>
-                            <td className="p-2 text-center font-black text-violet-700">{m.percentage}%</td>
-                            <td className="p-2 text-center font-black text-slate-800">{m.grade}</td>
-                            <td className="p-2 text-center font-extrabold">
+                            <td className="p-2.5 text-center font-black text-slate-900">{m.total}/{m.maxTotal}</td>
+                            <td className="p-2.5 text-center font-black text-violet-700">{m.percentage}%</td>
+                            <td className="p-2.5 text-center font-black text-slate-800">{m.grade}</td>
+                            <td className="p-2.5 text-center font-black">
                               <span className={`px-2 py-0.5 rounded-full text-[9px] ${
                                 m.passed ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
                               }`}>
@@ -266,54 +309,47 @@ export default function BulkPrintStudioModal({
               )}
 
               <div className="pt-6 border-t border-dashed flex items-center justify-between text-[11px] text-slate-600">
-                <span>Class Teacher Signature: ___________________</span>
-                <span>Examination Incharge: ___________________</span>
-                <span className="font-bold text-slate-900">{schoolInfo.principal} (Principal Seal)</span>
+                <span>Class Teacher Signature</span>
+                <span>Examination Controller</span>
+                <span className="font-bold text-slate-900">{schoolInfo.principal || 'Principal'} (Seal)</span>
               </div>
             </div>
           )}
 
-          {/* ================= 2. CLASS FEE DEFAULTERS MASTER SHEET ================= */}
+          {/* 2. CLASS FEE DEFAULTERS */}
           {docType === 'defaulter' && (
-            <div className="p-5 sm:p-7 rounded-3xl bg-white border-2 border-slate-300 shadow-xl space-y-4">
-              <div className="border-b-2 border-slate-900 pb-3 flex justify-between items-start">
-                <div className="flex items-center gap-3">
-                  {schoolInfo.logo && (
-                    <img src={schoolInfo.logo} alt="Logo" className="w-14 h-14 rounded-2xl object-cover border" />
-                  )}
-                  <div>
-                    <span className="inline-block text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-rose-600 text-white">
-                      OFFICIAL FEE COLLECTION & DEFAULTER STATEMENT
-                    </span>
-                    <h2 className="text-base sm:text-xl font-black text-slate-900 mt-1">{schoolInfo.name}</h2>
-                    <p className="text-[11px] text-slate-500 font-semibold">
-                      Class {selectedClass} • Academic Session {schoolInfo.session}
-                    </p>
-                  </div>
+            <div ref={bulkRef} className="p-6 sm:p-8 rounded-[32px] bg-white border-2 border-slate-300 shadow-xl space-y-4 max-w-3xl mx-auto">
+              <div className="border-b-2 border-slate-900 pb-3.5 flex justify-between items-start gap-3">
+                <div>
+                  <span className="inline-block text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded bg-rose-600 text-white">
+                    FEE COLLECTION & DEFAULTER STATEMENT
+                  </span>
+                  <h2 className="text-lg sm:text-2xl font-black text-slate-900 mt-1.5">{getSchoolDisplayName()}</h2>
+                  <p className="text-[11px] text-slate-500 font-bold">Class {selectedClass} • Session {schoolInfo.session}</p>
                 </div>
                 <div className="text-right">
                   <span className="px-3 py-1 rounded-xl bg-rose-100 text-rose-800 font-black text-xs">
                     Pending Due: ₹{totalClassDue.toLocaleString()}
                   </span>
-                  <p className="text-[10px] text-slate-400 mt-1">{defaulterStudents.length} Defaulters in Class</p>
+                  <p className="text-[10px] text-slate-400 font-bold mt-1">{defaulterStudents.length} Defaulters in Class</p>
                 </div>
               </div>
 
               {defaulterStudents.length === 0 ? (
-                <div className="p-8 text-center text-emerald-600 font-extrabold">
-                  ✓ Outstanding! 100% of fees in Class {selectedClass} are cleared with zero dues!
+                <div className="p-8 text-center text-emerald-600 font-extrabold text-sm">
+                  ✓ Outstanding! 100% of fees in Class {selectedClass} are cleared with zero pending dues!
                 </div>
               ) : (
-                <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                <div className="rounded-2xl border border-slate-200 overflow-hidden">
                   <table className="w-full text-left border-collapse text-[11px]">
                     <thead>
                       <tr className="bg-slate-900 text-white">
                         <th className="p-2.5 text-center">Roll</th>
-                        <th className="p-2.5">Student Name</th>
-                        <th className="p-2.5">Father / Guardian</th>
-                        <th className="p-2.5">Contact Phone</th>
-                        <th className="p-2.5 text-right">Total Package</th>
-                        <th className="p-2.5 text-right">Amount Paid</th>
+                        <th className="p-2.5">Candidate Name</th>
+                        <th className="p-2.5">Guardian Name</th>
+                        <th className="p-2.5">Phone</th>
+                        <th className="p-2.5 text-right">Total Fee</th>
+                        <th className="p-2.5 text-right">Paid Amount</th>
                         <th className="p-2.5 text-right">Balance Due</th>
                       </tr>
                     </thead>
@@ -323,7 +359,7 @@ export default function BulkPrintStudioModal({
                         return (
                           <tr key={st.id} className="bg-white">
                             <td className="p-2.5 text-center font-bold text-slate-500">#{st.rollNo}</td>
-                            <td className="p-2.5 font-extrabold text-slate-900">{st.name}</td>
+                            <td className="p-2.5 font-black text-slate-900">{st.name}</td>
                             <td className="p-2.5 font-bold text-slate-700">{st.parentName || 'N/A'}</td>
                             <td className="p-2.5 font-mono text-emerald-700">{st.phone}</td>
                             <td className="p-2.5 text-right font-bold text-slate-600">₹{Number(st.totalFee).toLocaleString()}</td>
@@ -338,79 +374,86 @@ export default function BulkPrintStudioModal({
               )}
 
               <div className="pt-6 border-t border-dashed flex items-center justify-between text-[11px] text-slate-600">
-                <span>Accounts Officer: ___________________</span>
-                <span>Class Teacher: ___________________</span>
-                <span className="font-bold text-slate-900">{schoolInfo.principal} (Principal Seal)</span>
+                <span>Accounts Officer</span>
+                <span>Class Teacher</span>
+                <span className="font-bold text-slate-900">{schoolInfo.principal || 'Principal'} (Seal)</span>
               </div>
             </div>
           )}
 
-          {/* ================= 3. BATCH ADMIT CARDS ================= */}
+          {/* 3. BATCH ADMIT CARDS (ONE CLEAN A4 CARD PER STUDENT) */}
           {docType === 'admit_batch' && (
-            <div className="space-y-6">
+            <div className="space-y-6 max-w-2xl mx-auto">
               {classStudents.length === 0 ? (
-                <p className="text-center text-slate-400 py-8">No students enrolled in Class {selectedClass}.</p>
+                <p className="text-center text-slate-400 py-8 font-bold">No students found in Class {selectedClass}.</p>
               ) : (
-                classStudents.map((st, i) => (
-                  <div
-                    key={st.id}
-                    className="p-5 sm:p-7 rounded-3xl bg-white border-2 border-slate-300 shadow-xl space-y-4 print:break-after-page"
-                    style={{ pageBreakAfter: 'always' }}
-                  >
-                    <div className="border-b-2 border-slate-800 pb-3 flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-3">
-                        {st.photo && (
-                          <img src={st.photo} alt="Student" className="w-14 h-14 rounded-2xl object-cover border-2 border-slate-300" />
-                        )}
-                        <div>
-                          <span className="inline-block text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-violet-600 text-white">
-                            EXAMINATION ADMIT CARD
-                          </span>
-                          <h2 className="text-base sm:text-xl font-black text-slate-900 mt-1">{schoolInfo.name}</h2>
-                          <p className="text-[11px] text-slate-500 font-semibold">{schoolInfo.examName} • {schoolInfo.session}</p>
+                classStudents.map((st, idx) => {
+                  const qrPayload = `ALTUMTRACK ADMIT CARD VERIFIED\nCandidate: ${st.name}\nRoll: #${st.rollNo} (Class ${st.className})\nExam: ${schoolInfo.examName}\nSchool: ${getSchoolDisplayName()}`;
+
+                  return (
+                    <div
+                      key={st.id}
+                      ref={el => cardRefs.current[idx] = el}
+                      className="p-6 sm:p-8 rounded-[32px] bg-white border-2 border-slate-300 shadow-xl space-y-4"
+                    >
+                      <div className="border-b-2 border-slate-800 pb-3 flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          {st.photo && (
+                            <img src={st.photo} alt="Student" className="w-14 h-14 rounded-2xl object-cover border-2 border-slate-300 shrink-0" />
+                          )}
+                          <div className="min-w-0">
+                            <span className="inline-block text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-blue-600 text-white">
+                              EXAMINATION ADMIT CARD
+                            </span>
+                            <h2 className="text-base sm:text-xl font-black text-slate-900 mt-1 truncate">{getSchoolDisplayName()}</h2>
+                            <p className="text-[11px] text-slate-500 font-semibold truncate">{schoolInfo.examName} • {schoolInfo.session}</p>
+                          </div>
+                        </div>
+                        <div className="shrink-0">
+                          <VerificationQRCode value={qrPayload} size={54} label="SECURITY" subtitle="ADMIT-CARD" />
                         </div>
                       </div>
-                    </div>
 
-                    <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded-2xl border border-slate-200">
-                      <div><p className="text-[10px] text-slate-400 font-bold">CANDIDATE</p><p className="font-extrabold text-slate-900">{st.name}</p></div>
-                      <div><p className="text-[10px] text-slate-400 font-bold">ROLL NO</p><p className="font-extrabold text-violet-700">#{st.rollNo}</p></div>
-                      <div><p className="text-[10px] text-slate-400 font-bold">CLASS</p><p className="font-bold">{st.className}-{st.section}</p></div>
-                      <div><p className="text-[10px] text-slate-400 font-bold">GUARDIAN</p><p className="font-bold">{st.parentName}</p></div>
-                    </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded-2xl border">
+                        <div><p className="text-[10px] text-slate-400 font-bold uppercase">CANDIDATE</p><p className="font-extrabold text-slate-900 truncate">{st.name}</p></div>
+                        <div><p className="text-[10px] text-slate-400 font-bold uppercase">ROLL NO</p><p className="font-extrabold text-blue-700">#{st.rollNo}</p></div>
+                        <div><p className="text-[10px] text-slate-400 font-bold uppercase">CLASS</p><p className="font-bold">{st.className}-{st.section}</p></div>
+                        <div><p className="text-[10px] text-slate-400 font-bold uppercase">GUARDIAN</p><p className="font-bold truncate">{st.parentName}</p></div>
+                      </div>
 
-                    <div className="overflow-x-auto rounded-2xl border border-slate-200">
-                      <table className="w-full text-left border-collapse text-[11px]">
-                        <thead>
-                          <tr className="bg-slate-900 text-white">
-                            <th className="p-2">Subject</th>
-                            <th className="p-2">Code</th>
-                            <th className="p-2">Exam Date</th>
-                            <th className="p-2">Shift & Hall</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-200">
-                          {subjects.map((sub, idx) => {
-                            const sched = getSubjectSchedule(sub, idx);
-                            return (
-                              <tr key={sub}>
-                                <td className="p-2 font-bold">{sub}</td>
-                                <td className="p-2 font-mono text-slate-500">{sched.code}</td>
-                                <td className="p-2 font-extrabold text-violet-700">{formatNiceDate(sched.date)}</td>
-                                <td className="p-2 text-slate-600">{sched.shift} ({sched.room})</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                      <div className="overflow-x-auto rounded-2xl border">
+                        <table className="w-full text-left text-[11px]">
+                          <thead>
+                            <tr className="bg-slate-900 text-white">
+                              <th className="p-2">Subject</th>
+                              <th className="p-2">Code</th>
+                              <th className="p-2">Exam Date</th>
+                              <th className="p-2">Shift & Hall</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200">
+                            {subjects.map((sub, sIdx) => {
+                              const sched = getSubjectSchedule(sub, sIdx);
+                              return (
+                                <tr key={sub}>
+                                  <td className="p-2 font-bold">{sub}</td>
+                                  <td className="p-2 font-mono text-slate-500">{sched.code}</td>
+                                  <td className="p-2 font-extrabold text-blue-700">{formatNiceDate(sched.date)}</td>
+                                  <td className="p-2 text-slate-600">{sched.shift} ({sched.room})</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
 
-                    <div className="pt-4 border-t border-dashed flex items-center justify-between text-[10px] text-slate-500">
-                      <span>Candidate Signature</span>
-                      <span className="font-bold text-slate-900">{schoolInfo.principal} (Controller of Exams)</span>
+                      <div className="pt-4 border-t border-dashed flex items-center justify-between text-[10px] text-slate-500">
+                        <span>Candidate Signature</span>
+                        <span className="font-bold text-slate-900">{schoolInfo.principal || 'Principal'} (Controller of Exams)</span>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           )}

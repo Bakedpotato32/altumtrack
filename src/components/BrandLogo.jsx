@@ -11,13 +11,13 @@ export default function BrandLogo({ size = "md", showSubtitle = true, light = fa
         isSmall ? 'w-9 h-9' : isLarge ? 'w-14 h-14 rounded-3xl' : 'w-11 h-11'
       }`}>
         <svg viewBox="0 0 100 100" className="w-4/5 h-4/5" fill="none">
-          <!-- Diamond Cap -->
+          {/* Diamond Cap */}
           <path d="M50 22 L80 38 L50 54 L20 38 Z" fill="#ffffff" />
-          <!-- Under Cap -->
+          {/* Under Cap */}
           <path d="M32 46 L32 62 C32 72 68 72 68 62 L68 46 L50 56 Z" fill="#ffffff" fillOpacity="0.85" />
-          <!-- Gold Chevron Ribbon -->
+          {/* Gold Chevron Ribbon */}
           <path d="M50 65 L64 57 L68 63 L50 73 L32 63 L36 57 Z" fill="url(#goldLinear)" />
-          <!-- Tassel -->
+          {/* Tassel */}
           <circle cx="74" cy="42" r="3.5" fill="url(#goldLinear)" />
           <path d="M74 44 L76 56" stroke="url(#goldLinear)" strokeWidth="2.5" strokeLinecap="round" />
           <defs>
