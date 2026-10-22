@@ -4,24 +4,32 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Academic Cap Diamond -->
+    <!-- Academic Cap Diamond in White -->
     <path
         android:fillColor="#ffffff"
-        android:pathData="M54,32 L84,46 L54,60 L24,46 Z"/>
-    <!-- Lower Cap Arch -->
+        android:pathData="M54,26 L82,41 L54,56 L26,41 Z"/>
+    <!-- Cap Underneath Arch -->
     <path
-        android:fillColor="#f8fafc"
-        android:pathData="M34,53 L34,68 C34,76 74,76 74,68 L74,53 L54,62 Z"/>
-    <!-- Gold Tassel & Crest Ribbon -->
+        android:fillColor="#e2e8f0"
+        android:pathData="M35,48 L35,62 C35,72 73,72 73,62 L73,48 L54,58 Z"/>
+
+    <!-- Gold Dynamic Track Chevron -->
+    <path
+        android:fillColor="#fbbf24"
+        android:pathData="M54,66 L66,58 L70,64 L54,74 L38,64 L42,58 Z"/>
+
+    <!-- Gold Tassel Bead & Strand -->
     <path
         android:fillColor="#f59e0b"
-        android:pathData="M78,48 L82,48 L84,65 L80,65 Z"/>
-    <!-- Gold Center Button -->
+        android:pathData="M76,43m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0"/>
     <path
-        android:fillColor="#fbbf24"
-        android:pathData="M54,42m-4,0a4,4 0,1 1,8 0a4,4 0,1 1,-8 0"/>
-    <!-- Emblem Stars -->
+        android:strokeColor="#f59e0b"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M76,45 L78,57"/>
+
+    <!-- Subtle Base Track Line -->
     <path
-        android:fillColor="#fbbf24"
-        android:pathData="M54,77 L56,82 L61,82 L57,85 L59,90 L54,87 L49,90 L51,85 L47,82 L52,82 Z"/>
+        android:fillColor="#38bdf8"
+        android:pathData="M38,80 L70,80 L70,83 L38,83 Z"/>
 </vector>

@@ -5,12 +5,14 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:fillColor="#7c3aed"
+        android:fillColor="#3b82f6"
         android:pathData="M0,0h108v108h-108z"/>
+    <!-- Diagonal Deep Indigo Wave -->
     <path
-        android:fillColor="#8b5cf6"
-        android:pathData="M0,0 L108,108 L0,108 Z"/>
+        android:fillColor="#4338ca"
+        android:pathData="M0,45 L108,0 L108,108 L0,108 Z"/>
+    <!-- Bottom Deep Violet Wave -->
     <path
-        android:fillColor="#6366f1"
-        android:pathData="M108,0 L0,108 L108,108 Z"/>
+        android:fillColor="#6d28d9"
+        android:pathData="M0,78 L108,35 L108,108 L0,108 Z"/>
 </vector>
